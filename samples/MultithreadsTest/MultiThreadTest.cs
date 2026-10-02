@@ -25,8 +25,11 @@ namespace MultipleThreadsTest
 
             Console.WriteLine("Validating the previous result...");
             var log = new FramedLog(config);
-            log.ReadList();
+            var readReport = log.ReadList();
+            Console.WriteLine(readReport.ToString());
             Console.WriteLine("Validation completed. Ctrl + C to exit, any key to start the 3 writers 3 readers multithread stress test");
+
+            Console.Read();
 
             log = null;
             File.Delete(config.FilePath);
@@ -35,8 +38,6 @@ namespace MultipleThreadsTest
                 LockFile = true
             });
             
-            Console.Read();
-
             var readThread = new ThreadStart(() =>
             {
                 string threadName = Thread.CurrentThread.Name;

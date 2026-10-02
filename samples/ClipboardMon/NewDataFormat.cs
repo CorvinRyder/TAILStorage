@@ -37,11 +37,11 @@ namespace WpfApp1
         });
         public static void init()
         {
-            instance.ReadList();
+            Console.WriteLine(instance.ReadList().ToString());
         }
         public static List<Record> GetList()
         {
-            return instance.Records.ToList();
+            return instance.Records;
         }
 
 
@@ -56,7 +56,7 @@ namespace WpfApp1
 
         public static List<Record> ReadList()
         {
-            return instance.Records.ToList();
+            return instance.Records;
         }
 
 

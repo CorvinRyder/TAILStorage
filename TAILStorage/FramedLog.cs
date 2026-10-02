@@ -5,106 +5,10 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.IO.Hashing;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace TAILStorage
 {
-    public class FramedLogConfiguration
-    {
-        public string FilePath { get; set; } = @"Record\records.tail";
-        public int BufferSize { get; set; } = 16384;
-        public string MagicNumber1
-        {
-            get
-            {
-                return Encoding.UTF8.GetString(BitConverter.GetBytes(magic1));
-            }
-            set
-            {
-                magic1 = BitConverter.ToInt32(Encoding.UTF8.GetBytes(value), 0);
-            }
-        }
-        public string MagicNumber2
-        {
-            get
-            {
-                return Encoding.UTF8.GetString(BitConverter.GetBytes(magic2));
-            }
-            set
-            {
-                magic2 = BitConverter.ToInt32(Encoding.UTF8.GetBytes(value), 0);
-            }
-        }
-        public bool LockFile { get; set; } = false;
-        internal int magic1 = 0x4C494154;
-        internal int magic2 = 0x44434552;
-    }
-
-    public struct Record
-    {
-        internal object CachedCustomHeader;
-        internal uint timestamp;
-        internal ReadOnlyMemory<byte> metaDataStringRaw;
-        public int MetaDataStringLen;
-        public int DataOffset;
-        public int DataLength;
-        public uint DataChecksum;
-        public int Compression;
-        internal bool IsDeleted;
-
-        public DateTime Date
-        {
-            get {
-                return DateTimeOffset.FromUnixTimeSeconds(timestamp).DateTime;
-            }
-        }
-
-        public T GetCustomHeader<T>() where T : struct
-        {
-            return (T) CachedCustomHeader;
-        }
-
-        public string MetaDataString
-        {
-            get
-            {
-                return Encoding.UTF8.GetString(metaDataStringRaw.ToArray());
-            }
-        }
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct FileHeader
-    {
-        public int magic1;
-        public short version;
-        public short reserved1;
-        public long reserved2;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct DataPacket
-    {
-        // 24 bytes
-        public int magic2;
-        public uint headerChecksum;
-        public uint checksum;
-        public uint timestamp;
-        public byte compression;
-        public byte dataMarker;
-        public short metaDataLen;
-        public int dataLen;
-        public long reserved;
-
-        public static DataPacket FillStructure(byte[] data, int offset)
-        {
-            DataPacket dp = MemoryMarshal.Read<DataPacket>(data.AsSpan(offset, Marshal.SizeOf<DataPacket>()));
-            return dp;
-        }
-    }
-
-    [StructLayout(LayoutKind.Explicit, Pack = 0)]
-    public struct DefaultHeader {}
-
     /// <summary>
     /// This class is a wrapper for FramedLog with DefaultHeader as the custom header type.  <para/>
     /// The DefaultHeader struct is used as a placeholder for the custom header <para/>
@@ -129,10 +33,11 @@ namespace TAILStorage
         private readonly int BUFFER_SIZE;
         private readonly bool LOCK_FILE;
 
-        private const int DATAPACKET_HEADER_SIZE = 32;
+        private readonly int DATAPACKET_HEADER_SIZE = Marshal.SizeOf<DataPacket>();
         private readonly int CUSTOM_HEADER_SIZE = Marshal.SizeOf<T>();
         private readonly int HEADER_SIZE;
         private readonly bool isCustomHeader = typeof(T) != typeof(DefaultHeader);
+
         private FileStream _file;
         private FileStream file
         {
@@ -157,6 +62,10 @@ namespace TAILStorage
         private readonly ReaderWriterLockSlim _streamLock = new ReaderWriterLockSlim();
         private readonly object _lock = new object();
 
+        /// <summary>
+        /// Get a copy of the records list, deleted records are filtered.  <para/>
+        /// The list is sorted by the physical sequence of the record in the file by default.  <para/>
+        /// </summary>
         public List<Record> Records
         {
             get
@@ -167,7 +76,6 @@ namespace TAILStorage
                     recordsCopy = new List<Record>(_records);
                 }
                 recordsCopy.RemoveAll(r => r.IsDeleted);
-                // recordsCopy.Sort((a, b) => a.timestamp.CompareTo(b.timestamp));
                 return recordsCopy;
 
             }
@@ -218,8 +126,14 @@ namespace TAILStorage
             }
         }
 
-        public List<Record> ReadList()
+        /// <summary>
+        /// Refresh the records list by reading the file from the beginning.  <para/>
+        /// The returned ReadReport contains information about the read operation, including any errors encountered.  <para/>
+        /// </summary>
+        /// <returns>The ReadReport object</returns>
+        public ReadReport ReadList()
         {
+            ReadReport report = new ReadReport();
             recordIdxLut.Clear();
             _records.Clear();
             var file = this.file;
@@ -229,19 +143,25 @@ namespace TAILStorage
             Span<byte> span = new Span<byte>(buffer, 0, 16);
             FileHeader fh = MemoryMarshal.Read<FileHeader>(span);
 
-            if (fh.magic1 != MAGIC_NUMBER_1 || file.Position == file.Length)
+            if (fh.magic1 != MAGIC_NUMBER_1)
             {
-                if(!LOCK_FILE)
+                report.Result = ReadResult.IncorrectFile;
+                if (!LOCK_FILE)
                     file.Close();
-                return _records;
+                return report;
             }
+
+            List<FixedRecord> courrupted = new List<FixedRecord>();
+
+            bool fixingRecord = false;
+            int startedPos = 0;
 
             int curPos = 0;
             long fileSize = file.Length;
             int readByteCnt = file.Read(buffer, 0, BUFFER_SIZE);
-            while (true)
+            while (readByteCnt > 0)
             {
-                if (readByteCnt!=BUFFER_SIZE && curPos==readByteCnt || readByteCnt==0)
+                if (readByteCnt!=BUFFER_SIZE && curPos==readByteCnt)
                     break;
                 
                 // 1. The current position exceeds the buffer size,
@@ -255,35 +175,53 @@ namespace TAILStorage
                 DataPacket dp = MemoryMarshal.Read<DataPacket>(headerSpan);
                 if (dp.magic2 != MAGIC_NUMBER_2)
                 {
-                    Console.WriteLine("Not frame header! Magic number not match");
+                    // Console.WriteLine("Not frame header! Magic number not match");
+                    if (!fixingRecord)
+                    {
+                        fixingRecord = true;
+                        startedPos = (int) file.Position -readByteCnt + curPos;
+                    }
                     int nextFrame = ScanForNextFrame(file, buffer, curPos + 1, ref readByteCnt);
                     if (nextFrame == -1)
                     {
-                        Console.WriteLine("Reached the end of the file!");
+                        // Console.WriteLine("Reached the end of the file!");
                         break;
                     }
                     curPos = nextFrame;
                     continue;
                 }
 
-                if (dp.headerChecksum != 0)
+                // 8 = sizeof(magic2) + sizeof(headerChecksum)
+                var headerByte = new ReadOnlySpan<byte>(buffer, curPos + 8, HEADER_SIZE - 8);
+                uint headerChecksum = Crc32.HashToUInt32(headerByte);
+                if (dp.headerChecksum != headerChecksum)
                 {
-                    // 8 = sizeof(magic2) + sizeof(headerChecksum)
-                    var headerByte = new ReadOnlySpan<byte>(buffer, curPos + 8, HEADER_SIZE - 8);
-                    uint headerChecksum = Crc32.HashToUInt32(headerByte);
-                    if (dp.headerChecksum != headerChecksum)
+                    if (!fixingRecord)
                     {
-                        Console.WriteLine("Bad header checksum!");
-                        int nextFrame = ScanForNextFrame(file, buffer, curPos + 4, ref readByteCnt);
-                        if (nextFrame == -1)
-                        {
-                            Console.WriteLine("Reached the end of the file!");
-                            break;
-                        }
-                        curPos = nextFrame;
-                        continue;
-                        // Scan for next valid frame start.
+                        fixingRecord = true;
+                        startedPos = (int)file.Position - readByteCnt + curPos;
                     }
+
+                    int nextFrame = ScanForNextFrame(file, buffer, curPos + 4, ref readByteCnt);
+                    if (nextFrame == -1)
+                    {
+                        // Console.WriteLine("Reached the end of the file!");
+                        break;
+                    }
+                    curPos = nextFrame;
+                    continue;
+                    // Scan for next valid frame start.
+                }
+
+                if (fixingRecord)
+                {
+                    fixingRecord = false;
+                    courrupted.Add(new FixedRecord()
+                    {
+                        StartPosition = startedPos,
+                        Length = (int)((file.Position - readByteCnt + curPos) - startedPos - HEADER_SIZE)
+                    });
+                    report.SessionFixed++;
                 }
 
                 curPos += DATAPACKET_HEADER_SIZE;
@@ -295,8 +233,12 @@ namespace TAILStorage
                     cachedCustomHeader = MemoryMarshal.Read<T>(customHeaderSpan);
                 }
 
-                if (dp.dataMarker == 0xFF) // Deleted
+                if (dp.dataMarker == 0xFF || dp.dataMarker == 0xFE) // Deleted
                 {
+                    if (dp.dataMarker == 0xFF)
+                        report.DeletedRecords++;
+                    else
+                        report.TombstonedRecords++;
                     curPos += CUSTOM_HEADER_SIZE + dp.metaDataLen + dp.dataLen;
                     continue;
                 }
@@ -345,14 +287,61 @@ namespace TAILStorage
                 else
                     curPos += dp.dataLen;
             }
+
+            if (courrupted.Count > 0)
+            {
+                report.Result = ReadResult.RecordsCorrected;
+                report.FixedRecords = courrupted.ToArray();
+                MarkInvalidRecords(courrupted, file);
+            }
+
             if(!LOCK_FILE)
                 file.Close();
 
             isEndOfFile = true;
 
-            return _records;
+            report.ValidRecords = _records.Count;
+
+            return report;
         }
 
+        private void MarkInvalidRecords(List<FixedRecord> records, FileStream file)
+        {
+            var timestamp = Math.Round((DateTime.Now - new DateTime(1970, 1, 1, 0, 0, 0)).TotalSeconds);
+            var buffer = new byte[HEADER_SIZE];
+            records.ForEach(record =>
+            {
+                Console.WriteLine(record.ToString());
+                file.Position = record.StartPosition;
+                DataPacket dp = new DataPacket()
+                {
+                    magic2 = MAGIC_NUMBER_2,
+                    timestamp = (uint)timestamp,
+                    compression = 0,
+                    dataLen = record.Length,
+                    dataMarker = 0xFE, // Mark as corrupted
+                    reserved = 0x4F4F4F4F4F4F5741,
+                };
+                Span<byte> headerSpan = new Span<byte>(buffer, 0, HEADER_SIZE);
+                MemoryMarshal.Write<DataPacket>(headerSpan, ref dp);
+                if (isCustomHeader)
+                {
+                    var customHeader = new T();
+                    MemoryMarshal.Write<T>(headerSpan.Slice(DATAPACKET_HEADER_SIZE), ref customHeader);
+                }
+                uint checksum = Crc32.HashToUInt32(headerSpan.Slice(8));
+                BitConverter.GetBytes(checksum).CopyTo(headerSpan.Slice(4, 4));
+                file.Write(buffer, 0, HEADER_SIZE);
+            });
+        }
+
+        /// <summary>
+        /// Read the next chunk of data from the file stream into the buffer, adjusting the current position accordingly.
+        /// </summary>
+        /// <param name="file">The FileStream</param>
+        /// <param name="buffer">The buffer array</param>
+        /// <param name="curPos">Reference of the curPos variable</param>
+        /// <returns></returns>
         private int ReadNextChunk(FileStream file, byte[] buffer, ref int curPos)
         {
             int diff = curPos - BUFFER_SIZE;
@@ -368,6 +357,14 @@ namespace TAILStorage
             return file.Read(buffer, 0, BUFFER_SIZE);
         }
 
+        /// <summary>
+        /// Look for the next frame header in the buffer and file stream, returning the position of the next frame header if found, or -1 if not found.
+        /// </summary>
+        /// <param name="fs">The FileStream</param>
+        /// <param name="buffer">The buffer</param>
+        /// <param name="curPos">Current Position</param>
+        /// <param name="readByte">Reference to the readByte variable</param>
+        /// <returns>The position of the beginning of the next frame in this file chunk. -1 if reach the end of the file.</returns>
         private int ScanForNextFrame(FileStream fs, byte[] buffer, int curPos, ref int readByte)
         {
             byte[] magicCheck = BitConverter.GetBytes(MAGIC_NUMBER_2);
@@ -391,6 +388,11 @@ namespace TAILStorage
             return -1;
         }
 
+        /// <summary>
+        /// Read the data associated with a given record from the file stream, verifying its checksum and decompressing it if necessary.
+        /// </summary>
+        /// <param name="record">The record to read the data stream</param>
+        /// <returns>The array that contains the data, null if checksum is incorrect.</returns>
         public byte[] GetData(Record record)
         {
            var file = this.file;
@@ -438,10 +440,23 @@ namespace TAILStorage
             }
         }
 
+        /// <summary>
+        /// Write a record to the history file with the given data, compression flag, and metadata. This method will create a new record with the provided information and append it to the history file.
+        /// </summary>
+        /// <param name="data"></param>
+        /// <param name="isCompressed"></param>
+        /// <param name="metaData"></param>
         public void WriteRecord(byte[] data, bool isCompressed, string metaData)
         {
             WriteRecord(data, isCompressed, metaData, new T());
         }
+        /// <summary>
+        /// Write a record to the history file with the given data, compression flag, metadata, and custom header. This method will create a new record with the provided information and append it to the history file.
+        /// </summary>
+        /// <param name="data"></param>
+        /// <param name="isCompressed"></param>
+        /// <param name="metaData"></param>
+        /// <param name="customHeader"></param>
         public void WriteRecord(byte[] data, bool isCompressed, string metaData, T customHeader)
         {
             _streamLock.EnterWriteLock();
@@ -463,7 +478,6 @@ namespace TAILStorage
             {
                 magic2 = MAGIC_NUMBER_2,
                 timestamp = (uint)timestamp,
-                // dataMarker = (byte)type,
                 compression = 0,
                 metaDataLen = (short)metaDataBytes.Length,
                 dataLen = data.Length,
@@ -528,6 +542,11 @@ namespace TAILStorage
             _streamLock.ExitWriteLock();
         }
 
+        /// <summary>
+        /// Delete a record from the history file. This method will mark the record as deleted in the file, and optionally wipe the data associated with the record.
+        /// </summary>
+        /// <param name="record"></param>
+        /// <param name="wipeData"></param>
         public void DeleteRecord(Record record, bool wipeData = false)
         {
             _streamLock.EnterWriteLock();

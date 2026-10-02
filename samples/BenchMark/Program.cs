@@ -24,15 +24,17 @@ time = DateTime.Now;
 Console.WriteLine("Start Writing Data to the File");
 for(int i = 0; i < 50000; i++)
 {
-    log.WriteRecord(testData[i], testData[i].Length > 1024, DateTime.Now.ToString());
+    log.WriteRecord(testData[i], testData[i].Length > 1024, $"Record#0{i}-{ipsum}");
 }
 Console.WriteLine($"Time Used: {(DateTime.Now - time).TotalMilliseconds} ms");
 
 time = DateTime.Now;
 Console.WriteLine("Start Reading Index from the File");
-var recordList = log.ReadList();
+var readReport = log.ReadList();
+var recordList = log.Records;
 Console.WriteLine($"Time Used: {(DateTime.Now - time).TotalMilliseconds} ms");
 Console.WriteLine($"{log.Records.Count()} records read from the file.");
+Console.WriteLine(readReport.ToString());
 
 time = DateTime.Now;
 Console.WriteLine("Start Reading 50000 records payload from the File");
