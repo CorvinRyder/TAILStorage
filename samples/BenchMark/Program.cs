@@ -18,6 +18,7 @@ for (int i = 0; i < 50000; i++)
     sb.Clear();
 }
 Console.WriteLine($"Time Used: {(DateTime.Now - time).TotalMilliseconds} ms");
+
 var log = new FramedLog(new FramedLogConfiguration() { LockFile = true });
 
 time = DateTime.Now;

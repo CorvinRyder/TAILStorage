@@ -38,11 +38,17 @@ namespace TAILStorage
         private readonly int HEADER_SIZE;
         private readonly bool isCustomHeader = typeof(T) != typeof(DefaultHeader);
 
+        private readonly bool isValidFile;
+
         private FileStream _file;
         private FileStream file
         {
             get
             {
+                if(!isValidFile)
+                {
+                    throw new InvalidOperationException("The file is not a TAIL storage file!");
+                }
                 if (!LOCK_FILE || (LOCK_FILE && _file == null))
                 {
                     _file = File.Open(HISTORY_FILE_PATH, FileMode.Open);
@@ -81,8 +87,19 @@ namespace TAILStorage
             }
         }
 
+        /// <summary>
+        /// Initialize the FramedLog with default configuration.  <para/>
+        /// Reference: <see cref="FramedLogConfiguration"/>  <para/>
+        /// </summary>
         public FramedLog() : this(new FramedLogConfiguration()) { }
 
+        /// <summary>
+        /// Initalize the FramedLog with the given configuration.  <para/>
+        /// This constructor will create the file if it does not exist, and will throw an exception if the file is not a valid TAIL storage file.  <para/>
+        /// </summary>
+        /// <param name="config"></param>
+        /// <exception cref="ArgumentException"></exception>
+        /// <exception cref="InvalidDataException"></exception>
         public FramedLog(FramedLogConfiguration config)
         {
             MAGIC_NUMBER_1 = config.magic1;
@@ -113,6 +130,19 @@ namespace TAILStorage
                 fs.Write(result, 0, result.Length);
                 fs.Close();
             }
+
+            byte[] buffer = new byte[16];
+            using (var fs = File.Open(HISTORY_FILE_PATH, FileMode.Open))
+            {
+                fs.Read(buffer, 0, 16);
+                Span<byte> span = new Span<byte>(buffer, 0, 16);
+                FileHeader fh = MemoryMarshal.Read<FileHeader>(span);
+
+                isValidFile = fh.magic1 == MAGIC_NUMBER_1;
+                if (!isValidFile)
+                    throw new InvalidDataException($"Invalid magic number in file header!");
+            }
+
             _records = new List<Record>();
             recordIdxLut = new Dictionary<int, int>();
         }
@@ -129,6 +159,7 @@ namespace TAILStorage
         /// <summary>
         /// Refresh the records list by reading the file from the beginning.  <para/>
         /// The returned ReadReport contains information about the read operation, including any errors encountered.  <para/>
+        /// Please note the engine only check the magic number and checksum in the file header, it will not check the integrity of the data stream.  <para/>
         /// </summary>
         /// <returns>The ReadReport object</returns>
         public ReadReport ReadList()
@@ -137,19 +168,8 @@ namespace TAILStorage
             recordIdxLut.Clear();
             _records.Clear();
             var file = this.file;
-            file.Position = 0;
+            file.Position = 16;
             byte[] buffer = new byte[BUFFER_SIZE];
-            file.Read(buffer, 0, 16);
-            Span<byte> span = new Span<byte>(buffer, 0, 16);
-            FileHeader fh = MemoryMarshal.Read<FileHeader>(span);
-
-            if (fh.magic1 != MAGIC_NUMBER_1)
-            {
-                report.Result = ReadResult.IncorrectFile;
-                if (!LOCK_FILE)
-                    file.Close();
-                return report;
-            }
 
             List<FixedRecord> courrupted = new List<FixedRecord>();
 
@@ -179,7 +199,7 @@ namespace TAILStorage
                     if (!fixingRecord)
                     {
                         fixingRecord = true;
-                        startedPos = (int) file.Position -readByteCnt + curPos;
+                        startedPos = (int)file.Position - readByteCnt + curPos;
                     }
                     int nextFrame = ScanForNextFrame(file, buffer, curPos + 1, ref readByteCnt);
                     if (nextFrame == -1)
@@ -288,6 +308,16 @@ namespace TAILStorage
                     curPos += dp.dataLen;
             }
 
+            if (fixingRecord)
+            {
+                courrupted.Add(new FixedRecord()
+                {
+                    StartPosition = startedPos,
+                    Length = (int)((file.Position - readByteCnt) - startedPos - HEADER_SIZE)
+                });
+                report.SessionFixed++;
+            }
+
             if (courrupted.Count > 0)
             {
                 report.Result = ReadResult.RecordsCorrected;
@@ -311,13 +341,11 @@ namespace TAILStorage
             var buffer = new byte[HEADER_SIZE];
             records.ForEach(record =>
             {
-                Console.WriteLine(record.ToString());
                 file.Position = record.StartPosition;
                 DataPacket dp = new DataPacket()
                 {
                     magic2 = MAGIC_NUMBER_2,
                     timestamp = (uint)timestamp,
-                    compression = 0,
                     dataLen = record.Length,
                     dataMarker = 0xFE, // Mark as corrupted
                     reserved = 0x4F4F4F4F4F4F5741,
@@ -368,8 +396,7 @@ namespace TAILStorage
         private int ScanForNextFrame(FileStream fs, byte[] buffer, int curPos, ref int readByte)
         {
             byte[] magicCheck = BitConverter.GetBytes(MAGIC_NUMBER_2);
-            var span = new ReadOnlySpan<byte>(buffer);
-            span = span.Slice(curPos);
+            var span = new ReadOnlySpan<byte>(buffer, curPos, readByte - curPos);
 
             int fileSize = (int)fs.Length;
 

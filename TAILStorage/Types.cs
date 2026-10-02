@@ -7,10 +7,23 @@ using System.Threading.Tasks;
 
 namespace TAILStorage
 {
+    /// <summary>
+    /// The FramedLogConfiguration class represents the configuration settings.
+    /// </summary>
     public class FramedLogConfiguration
     {
+        /// <summary>
+        /// The file path where the records will be stored. Default is "Record\records.tail".
+        /// </summary>
         public string FilePath { get; set; } = @"Record\records.tail";
+        /// <summary>
+        /// The size of the buffer used for reading and writing records. Default is 16384 bytes (16 KB). <para/>
+        /// Please keep in mind that the buffer size should be a multiple of 1024 bytes to ensure proper alignment and performance. <para/>
+        /// </summary>
         public int BufferSize { get; set; } = 16384;
+        /// <summary>
+        /// The magic number used to identify the file format. Only the first 4 characters is used when setting this property.<para/>
+        /// </summary>
         public string MagicNumber1
         {
             get
@@ -22,6 +35,9 @@ namespace TAILStorage
                 magic1 = BitConverter.ToInt32(Encoding.UTF8.GetBytes(value), 0);
             }
         }
+        /// <summary>
+        /// The magic number used to identify the data packet format. Only the first 4 characters is used when setting this property.<para/>
+        /// </summary>
         public string MagicNumber2
         {
             get
@@ -33,11 +49,18 @@ namespace TAILStorage
                 magic2 = BitConverter.ToInt32(Encoding.UTF8.GetBytes(value), 0);
             }
         }
+        /// <summary>
+        /// Determine whether to lock the file when the engine is running. Default is false. <para/>
+        /// For high throughput scenarios, it is recommended to set this property to true to prevent frequently open and close the file. <para/>
+        /// </summary>
         public bool LockFile { get; set; } = false;
         internal int magic1 = 0x4C494154;
         internal int magic2 = 0x44434552;
     }
 
+    /// <summary>
+    /// The Record structure represents a record in the log, containing metadata and data information.
+    /// </summary>
     public struct Record
     {
         internal object CachedCustomHeader;
@@ -58,6 +81,11 @@ namespace TAILStorage
             }
         }
 
+        /// <summary>
+        /// This method retrieves the custom header associated with the record. The custom header is expected to be a value type (struct) and is cast to the specified type T. <para/>
+        /// </summary>
+        /// <typeparam name="T">Your custom header structure</typeparam>
+        /// <returns></returns>
         public T GetCustomHeader<T>() where T : struct
         {
             return (T)CachedCustomHeader;
