@@ -5,7 +5,7 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.IO.Hashing;
-using static System.Runtime.InteropServices.JavaScript.JSType;
+using System.Threading;
 
 namespace TAILStorage
 {
@@ -241,7 +241,6 @@ namespace TAILStorage
                         StartPosition = startedPos,
                         Length = (int)((file.Position - readByteCnt + curPos) - startedPos - HEADER_SIZE)
                     });
-                    report.SessionFixed++;
                 }
 
                 curPos += DATAPACKET_HEADER_SIZE;
@@ -315,17 +314,17 @@ namespace TAILStorage
                     StartPosition = startedPos,
                     Length = (int)((file.Position - readByteCnt) - startedPos - HEADER_SIZE)
                 });
-                report.SessionFixed++;
             }
 
             if (courrupted.Count > 0)
             {
+                MarkInvalidRecords(courrupted, file);
                 report.Result = ReadResult.RecordsCorrected;
                 report.FixedRecords = courrupted.ToArray();
-                MarkInvalidRecords(courrupted, file);
+                report.RecordsFixed = courrupted.Count;
             }
 
-            if(!LOCK_FILE)
+            if (!LOCK_FILE)
                 file.Close();
 
             isEndOfFile = true;

@@ -161,14 +161,14 @@ namespace TAILStorage
     {
         public int ValidRecords;
         public int DeletedRecords;
-        public int SessionFixed;
+        public int RecordsFixed;
         public int TombstonedRecords;
         public ReadResult Result;
         public FixedRecord[] FixedRecords;
 
         public override string ToString()
         {
-            return $"ValidRecords: {ValidRecords}, DeletedRecords: {DeletedRecords}, SessionFixed: {SessionFixed}, TombstonedRecords: {TombstonedRecords}, Result: {Result}";
+            return $"ValidRecords: {ValidRecords}, DeletedRecords: {DeletedRecords}, SessionFixed: {RecordsFixed}, TombstonedRecords: {TombstonedRecords}, Result: {Result}";
         }
     }
 }
