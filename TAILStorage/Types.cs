@@ -66,6 +66,7 @@ namespace TAILStorage
         internal object CachedCustomHeader;
         internal uint timestamp;
         internal ReadOnlyMemory<byte> metaDataStringRaw;
+        internal string cachedMetaData;
         public int MetaDataStringLen;
         public int DataOffset;
         public int DataLength;
@@ -95,7 +96,9 @@ namespace TAILStorage
         {
             get
             {
-                return Encoding.UTF8.GetString(metaDataStringRaw.ToArray());
+                if (cachedMetaData == null)
+                    cachedMetaData = Encoding.UTF8.GetString(metaDataStringRaw.ToArray());
+                return cachedMetaData;
             }
         }
     }

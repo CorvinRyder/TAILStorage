@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Runtime.InteropServices;
 
-namespace WpfApp1
+namespace ClipboardChecker
 {
     class WinAPI
     {

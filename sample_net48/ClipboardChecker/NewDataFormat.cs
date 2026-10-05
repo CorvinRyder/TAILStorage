@@ -7,27 +7,20 @@ using System.Runtime.InteropServices;
 using System.Text;
 using TAILStorage;
 
-namespace WpfApp1
+namespace ClipboardChecker
 {
-    public enum DataType : byte
-    {
-        Image = 0,
-        Text = 1,
-        RTF = 2,
-        Deleted = 0xFF
-    }
-    [StructLayout(LayoutKind.Sequential, Pack = 0)]
-    internal struct FramedLogHeader
-    {
-        public byte Version;
-        public byte Reserved;
-        public short ContentType;
-        public int Reserved2;
-        long Reserved3;
-    }
+
     internal class NewDataFormat
     {
-
+        [StructLayout(LayoutKind.Sequential, Pack = 0)]
+        internal struct FramedLogHeader
+        {
+            public byte Version;
+            public byte Reserved;
+            public short ContentType;
+            public int Reserved2;
+            long Reserved3;
+        }
 
         private static FramedLog<FramedLogHeader> instance = new FramedLog<FramedLogHeader>(new FramedLogConfiguration()
         {
@@ -37,11 +30,11 @@ namespace WpfApp1
         });
         public static void init()
         {
-            Console.WriteLine(instance.ReadList().ToString());
+            instance.ReadList();
         }
         public static List<Record> GetList()
         {
-            return instance.Records;
+            return instance.Records.ToList();
         }
 
 
@@ -56,7 +49,7 @@ namespace WpfApp1
 
         public static List<Record> ReadList()
         {
-            return instance.Records;
+            return instance.Records.ToList();
         }
 
 
