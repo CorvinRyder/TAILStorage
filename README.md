@@ -51,6 +51,31 @@ Every record in a `.tail` log file is stored as an independent, self-contained *
 | $32+M$     | **Metadata**         | $N_1$        | `string`  | UTF-8 metadata string payload.                                                   |
 | $32+M+N_1$ | **Payload Bytes**    | $N_2$        | `byte[]`  | Raw or compressed record payload. Overwritten with `0x00` when wiped.            |
 
+## Included Sample Projects
+
+This repository includes three practical sample applications demonstrating real-world usage, high-frequency throughput, and multi-threaded engine resilience:
+
+### 1. Clipboard Monitor (ClipboardMonitor)
+
+A practical desktop integration sample demonstrating real-time data persistence:
+
+- Monitors OS clipboard updates and automatically writes text, copied images, and screenshots to the .paws store.
+- Demonstrates UI responsiveness, low GC impact under continuous background operation, and simple event-driven engine persistence.
+
+### 2. Performance Benchmark (PerformanceBenchmark)
+
+A dedicated stress-testing tool designed to measure raw IOPS and memory consumption:
+
+- Measures throughput for $50,000+$ write operations with compression enabled.
+- Measures profile allocation overhead, verifying low GC generation pressure during rapid batch processing.
+
+### 3. Multi-Threaded Stability Test (MultipleThreadsTest)
+
+A concurrent stress harness validating thread safety and data integrity:
+
+- Executes multiple concurrent writer threads and reader threads against a single shared .paws file engine.
+- Validates data integrity across simultaneous read and write streams to ensure zero data tearing, handle collisions, or memory corruption.
+
 ## Framework Compatibility (.NET Framework 4.8)
 
 While **FramedLog** targets modern .NET (.NET 6.0 / 8.0+), it fully supports legacy **.NET Framework 4.8** environments, with performance trade off.
